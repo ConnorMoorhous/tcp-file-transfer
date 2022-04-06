@@ -1,9 +1,7 @@
 #include <sys/types.h>
 #include <sys/socket.h>
-#include <sys/select.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
-#include <sys/stat.h>
 #include <string.h>
 #include <stdio.h>
 #include <errno.h>
@@ -11,27 +9,84 @@
 #include <iostream>
 #include <sstream>
 
+#include <sys/select.h> 
+#include <sys/stat.h> // mkdir
+
 #define BUFFER_SIZE 1024
+#define TIMEOUT 10
 
 using namespace std;
 
-void receiveFile(int socket, string dir, int fileNum) {
+bool makeDirectory(string path) {
+
+    if (mkdir(path.c_str(), 0775) == -1) {
+        switch(errno){
+            case (ENOENT): {
+              // parent didn't exist, try to create it
+              if (makeDirectory(path.substr(0, path.find_last_of('/')))) {
+                // try to create again
+                return (mkdir(path.c_str(), 0775) == 0);
+              }
+              else {
+                return false;
+              }
+            }
+            case (EEXIST): {
+              // path already exists
+              return true;
+            }
+            default: {
+              return false;
+            }
+        }
+    }
+    else {
+      return true;
+    } 
+}
+
+void receiveFile(int socket, FILE* file, string fileName) {
   bool isEnd = false;
   char buffer[BUFFER_SIZE] = {0};
   size_t dataSize;
-  string fileName = dir + "/" + to_string(fileNum) + ".file";
 
-  FILE *file = fopen(fileName.c_str(), "wb");
+  int selVal;
+  struct timeval timeout;
+  fd_set readfds;
+
+  FD_ZERO(&readfds);
+  FD_SET(socket, &readfds);
+
+  timeout.tv_sec = TIMEOUT;
+  timeout.tv_usec = 0;
 
   while (!isEnd) {
+    selVal = select(socket + 1, &readfds, NULL, NULL, &timeout);
+    if (selVal == -1) {
+      cerr << "ERROR: select() failed" << endl; 
+      return;
+    }
+    if (selVal == 0) {
+      // Timeout
+      string timeError = "ERROR";
+      cerr << "ERROR: timeout while receiving data from client" << endl;
+      fclose(file);
+      file = fopen(fileName.c_str(), "wb");
+      fwrite(timeError.c_str(), sizeof(char), timeError.size(), file);
+      fclose(file);
+      return;
+    }
+    // receive data
     memset(buffer, '\0', sizeof(buffer));
     if ((dataSize = recv(socket, buffer, BUFFER_SIZE, 0)) <= 0) {
-        break;
+      cout << "all data received\n";
+      fclose(file);
+      break;
     }
+    // write data to file
     fwrite(&buffer, 1, dataSize, file);
   }
-  fclose(file);
-  //cout << "File received\n";
+  cout << "all data written to /" << fileName << "\n";
 } 
 
 int main(int argc, char* argv[])
@@ -47,12 +102,18 @@ int main(int argc, char* argv[])
   }
 
   // process directory argument
-  string dir = string(argv[2]);
-  dir.erase(dir.begin());
-  cout << "directory: " << dir << "\n";
+  string path = string(argv[2]);
+  if (path.front() == '/') {
+    path.erase(path.begin());
+  }
+  cout << "directory: " << path << "\n";
 
-  if (mkdir(dir.c_str(), 0777) == -1) {
-      // cerr << "ERROR: Failed to create directory" << endl;
+  //string dirCommand = "sudo mkdir -p " + path;
+  //system(dirCommand.c_str());
+
+  if (makeDirectory(path) == false) {
+      cerr << "ERROR: Failed to create directory: " << path << endl;
+      return 20;
     }
 
   // create a socket using TCP IP
@@ -92,16 +153,22 @@ int main(int argc, char* argv[])
     perror("accept");
     return 4;
   }
+  int connectionID = 1;
 
+  if (path.back() != '/') {
+    path += '/';
+  }
+  string fileName = path + to_string(connectionID) + ".file";
+
+  FILE *file = fopen(fileName.c_str(), "wb");
   char ipstr[INET_ADDRSTRLEN] = {'\0'};
   inet_ntop(clientAddr.sin_family, &clientAddr.sin_addr, ipstr, sizeof(ipstr));
-  cout << "Accept a connection from: " << ipstr << ":" <<
+  cout << "Accepted a connection from: " << ipstr << ":" <<
     ntohs(clientAddr.sin_port) << endl;
 
   // read/write data from/into the connection
   
-  //create file first, once connection is accepted?
-  receiveFile(clientSockfd, dir, 1);
+  receiveFile(clientSockfd, file, fileName);
 
   close(clientSockfd);
   

@@ -9,43 +9,142 @@
 #include <iostream>
 #include <sstream>
 
+#include <sys/select.h>
+#include <fcntl.h>
+
 #define BUFFER_SIZE 1024
+#define TIMEOUT 10
 
 using namespace std;
 
-int sendFile(int socket, string fileName) {
+void connectServer(int socket, int port, string ip) {
+
+  struct sockaddr_in serverAddr;
+  serverAddr.sin_family = AF_INET;
+  serverAddr.sin_port = htons(port);     // short, network byte order
+  serverAddr.sin_addr.s_addr = inet_addr(ip.c_str());
+  memset(serverAddr.sin_zero, '\0', sizeof(serverAddr.sin_zero));
+
+  // set socket to nonblocking
+  int flags = fcntl(socket, F_GETFL);
+  flags = flags + O_NONBLOCK;
+  fcntl(socket, F_SETFL, flags);
+
+  // connect to server
+  if (connect(socket, (struct sockaddr *)&serverAddr, sizeof(serverAddr)) == -1) {
+    
+    if (errno != EINPROGRESS) {
+      perror("connect");
+      exit(3);
+    }
+
+    struct timeval timeout;
+    fd_set writefds;
+    fd_set extendfds;
+
+    FD_ZERO(&writefds);
+    FD_SET(socket, &writefds);
+    FD_ZERO(&extendfds);
+    FD_SET(socket, &extendfds);
+    
+    timeout.tv_sec = TIMEOUT;
+    timeout.tv_usec = 0;
+
+    int selVal = select(socket + 1, NULL, &writefds, &extendfds, &timeout);
+    if (selVal == -1) {
+      cerr << "ERROR: select() failed" << endl; 
+      exit(4);
+    }
+    if (selVal == 0) {
+      // timeout
+      close(socket);
+      cerr << "ERROR: timeout while trying to connect to server" << endl;
+      exit(5);
+    } 
+
+    // revert socket back to blocking
+    flags = flags - O_NONBLOCK;
+    fcntl(socket, F_SETFL, flags);
+  }
+
+  struct sockaddr_in clientAddr;
+  socklen_t clientAddrLen = sizeof(clientAddr);
+  if (getsockname(socket, (struct sockaddr *)&clientAddr, &clientAddrLen) == -1) {
+    perror("getsockname");
+    exit(6);
+  }
+
+  char ipstr[INET_ADDRSTRLEN] = {'\0'};
+  inet_ntop(clientAddr.sin_family, &clientAddr.sin_addr, ipstr, sizeof(ipstr));
+  cout << "Set up a connection from: " << ipstr << ":" <<
+    ntohs(clientAddr.sin_port) << endl;
+
+  return;
+}
+
+void sendFile(int socket, string fileName) {
+
   char buffer[BUFFER_SIZE] = {0};
+  int bytesRead;
   FILE *file;
 
+  // open file for reading
   if ((file = fopen(fileName.c_str(), "rb")) == NULL)
   {
-    cerr << "ERROR: Failed to open file" << endl;
-    return 17;
+    cerr << "ERROR: failed to open " << fileName << endl;
+    exit(7);
   }
 
-  //size_t rret, wret;
-  int bytes_read;
+  int selVal;
+  struct timeval timeout;
+  fd_set writefds;
+  fd_set extendfds;
 
+  FD_ZERO(&writefds);
+  FD_SET(socket, &writefds);
+  FD_ZERO(&extendfds);
+  FD_SET(socket, &extendfds);
+    
+  timeout.tv_sec = TIMEOUT;
+  timeout.tv_usec = 0;
+
+  // send file over socket
   while (!feof(file)) {
+
+    selVal = select(socket + 1, NULL, &writefds, &extendfds, &timeout);
+    if (selVal == -1) {
+      cerr << "ERROR: select() failed" << endl; 
+      exit(8);
+    }
+    if (selVal == 0) {
+      // timeout
+      close(socket);
+      cerr << "ERROR: timeout while trying to send data to server" << endl;
+      exit(9);
+    } 
+
     memset(buffer, '\0', sizeof(buffer));
 
-    if ((bytes_read = fread(&buffer, 1, BUFFER_SIZE, file)) > 0)
-      send(socket, buffer, bytes_read, 0);
-    else
+    if ((bytesRead = fread(&buffer, 1, BUFFER_SIZE, file)) > 0) {
+      send(socket, buffer, bytesRead, 0);
+    }
+    else {
       break;
+    }
   }
   
+  // close file
   if (fclose(file) == EOF) {
-    cerr << "ERROR: Failed to close file" << endl;
-    return 18;
+    cerr << "ERROR: failed to close " << fileName << endl;
+    exit(10);
   }
 
-  return 0;
+  return;
 }
 
 int main(int argc, char* argv[])
 {
-  // process host/ip argument
+  // process hostname/ip argument
   string localhost = "127.0.0.1";
   string ip = string(argv[1]);
   cout << "ip address: " << ip << "\n";
@@ -53,6 +152,12 @@ int main(int argc, char* argv[])
     ip.replace(0,9, localhost);
     cout << "new ip: " << ip << "\n";
   }
+  /*
+  else if (invalid ip) {
+    cerr << "ERROR: invalid ip address" << endl;
+    return 1;
+  }
+  */
 
   // process port argument
   istringstream portArg(argv[2]);
@@ -60,8 +165,8 @@ int main(int argc, char* argv[])
   portArg >> port;
   cout << "port: " << port << "\n";
   if (port < 1024) {
-    cerr << "ERROR: Invalid port number" << endl;
-    return 15;
+    cerr << "ERROR: invalid port number" << endl;
+    return 2;
   }
 
   // process file argument
@@ -71,49 +176,13 @@ int main(int argc, char* argv[])
   // create a socket using TCP IP
   int sockfd = socket(AF_INET, SOCK_STREAM, 0);
 
-  // struct sockaddr_in addr;
-  // addr.sin_family = AF_INET;
-  // addr.sin_port = htons(40001);     // short, network byte order
-  // addr.sin_addr.s_addr = inet_addr("127.0.0.1");
-  // memset(addr.sin_zero, '\0', sizeof(addr.sin_zero));
-  // if (bind(sockfd, (struct sockaddr *)&addr, sizeof(addr)) == -1) {
-  //   perror("bind");
-  //   return 1;
-  // }
-
-  struct sockaddr_in serverAddr;
-  serverAddr.sin_family = AF_INET;
-  serverAddr.sin_port = htons(port);     // short, network byte order
-  serverAddr.sin_addr.s_addr = inet_addr(ip.c_str());
-  memset(serverAddr.sin_zero, '\0', sizeof(serverAddr.sin_zero));
-
   // connect to the server
-  if (connect(sockfd, (struct sockaddr *)&serverAddr, sizeof(serverAddr)) == -1) {
-    perror("connect");
-    return 2;
-  }
+  connectServer(sockfd, port, ip);
 
-  // select timeout?
+  // send file to the server
+  sendFile(sockfd, fileName);
 
-  struct sockaddr_in clientAddr;
-  socklen_t clientAddrLen = sizeof(clientAddr);
-  if (getsockname(sockfd, (struct sockaddr *)&clientAddr, &clientAddrLen) == -1) {
-    perror("getsockname");
-    return 3;
-  }
-
-  char ipstr[INET_ADDRSTRLEN] = {'\0'};
-  inet_ntop(clientAddr.sin_family, &clientAddr.sin_addr, ipstr, sizeof(ipstr));
-  cout << "Set up a connection from: " << ipstr << ":" <<
-    ntohs(clientAddr.sin_port) << endl;
-
-
-  // send/receive data to/from connection
-  int e;
-  if ((e = sendFile(sockfd, fileName)) != 0) {
-    return e;
-  }
-
+  // close socket
   close(sockfd);
 
   return 0;

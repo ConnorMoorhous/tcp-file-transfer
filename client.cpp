@@ -9,8 +9,8 @@
 #include <iostream>
 #include <sstream>
 
-#include <sys/select.h>
 #include <fcntl.h>
+#include <sys/select.h>
 
 #define BUFFER_SIZE 1024
 #define TIMEOUT 10
@@ -89,7 +89,7 @@ void sendFile(int socket, string fileName) {
   FILE *file;
 
   // open file for reading
-  if ((file = fopen(fileName.c_str(), "rb")) == NULL)
+  if ((file = fopen(fileName.c_str(), "r")) == NULL)
   {
     cerr << "ERROR: failed to open " << fileName << endl;
     exit(7);
@@ -98,20 +98,17 @@ void sendFile(int socket, string fileName) {
   int selVal;
   struct timeval timeout;
   fd_set writefds;
-  fd_set extendfds;
-
-  FD_ZERO(&writefds);
-  FD_SET(socket, &writefds);
-  FD_ZERO(&extendfds);
-  FD_SET(socket, &extendfds);
     
   timeout.tv_sec = TIMEOUT;
   timeout.tv_usec = 0;
-
+  
   // send file over socket
   while (!feof(file)) {
 
-    selVal = select(socket + 1, NULL, &writefds, &extendfds, &timeout);
+    FD_ZERO(&writefds);
+    FD_SET(socket, &writefds);
+  
+    selVal = select(socket + 1, NULL, &writefds, NULL, &timeout);
     if (selVal == -1) {
       cerr << "ERROR: select() failed" << endl; 
       exit(8);
@@ -142,22 +139,59 @@ void sendFile(int socket, string fileName) {
   return;
 }
 
+bool validateIP(string ip) {
+
+  size_t pos = 0;
+  int n = 0;
+  bool isDigit;
+  string token;
+
+  while ((pos = ip.find(".")) != string::npos && n < 4) {
+    
+    if (pos == 0) {
+      return false;
+    }
+
+    token = ip.substr(0, pos);
+    cout << "token" << n << ": " << token << "\n";
+    isDigit = !token.empty() && (token.find_first_not_of("[0123456789]") == string::npos);
+    
+    if (!isDigit || stoi(token) < 0 || stoi(token) > 255) {
+      return false;
+    }
+
+    ip.erase(0, pos + 1);
+    n++;
+  }
+
+  if (n != 3) {
+    return false;
+  }
+
+  token = ip.substr(0, pos);
+  isDigit = !token.empty() && (token.find_first_not_of("[0123456789]") == string::npos);
+  
+  if (!isDigit || stoi(token) < 0 || stoi(token) > 255) {
+      return false;
+  }
+
+  return true;
+}
+
 int main(int argc, char* argv[])
 {
   // process hostname/ip argument
   string localhost = "127.0.0.1";
   string ip = string(argv[1]);
   cout << "ip address: " << ip << "\n";
+
   if (ip.compare("localhost") == 0) {
-    ip.replace(0,9, localhost);
-    cout << "new ip: " << ip << "\n";
+    ip.replace(0, localhost.length(), localhost);
   }
-  /*
-  else if (invalid ip) {
+  else if (!validateIP(ip)) {
     cerr << "ERROR: invalid ip address" << endl;
     return 1;
   }
-  */
 
   // process port argument
   istringstream portArg(argv[2]);
@@ -182,7 +216,7 @@ int main(int argc, char* argv[])
   // send file to the server
   sendFile(sockfd, fileName);
 
-  // close socket
+  // abort connection
   close(sockfd);
 
   return 0;

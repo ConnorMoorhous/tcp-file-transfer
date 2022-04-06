@@ -9,58 +9,39 @@
 #include <iostream>
 #include <sstream>
 
+#include <fstream>
+#include <signal.h>
 #include <sys/select.h> 
-#include <sys/stat.h> // mkdir
 
 #define BUFFER_SIZE 1024
 #define TIMEOUT 10
+#define MAX_CONNECTIONS 10
+#define UNLIMITED_CONNECTIONS false
 
 using namespace std;
 
-bool makeDirectory(string path) {
+void receiveFile(int socket, string filePath) {
 
-    if (mkdir(path.c_str(), 0775) == -1) {
-        switch(errno){
-            case (ENOENT): {
-              // parent didn't exist, try to create it
-              if (makeDirectory(path.substr(0, path.find_last_of('/')))) {
-                // try to create again
-                return (mkdir(path.c_str(), 0775) == 0);
-              }
-              else {
-                return false;
-              }
-            }
-            case (EEXIST): {
-              // path already exists
-              return true;
-            }
-            default: {
-              return false;
-            }
-        }
-    }
-    else {
-      return true;
-    } 
-}
-
-void receiveFile(int socket, FILE* file, string fileName) {
   bool isEnd = false;
   char buffer[BUFFER_SIZE] = {0};
   size_t dataSize;
+
+  // open file for writing
+  ofstream file;
+  file.open(filePath, ios::out | ios::trunc);
 
   int selVal;
   struct timeval timeout;
   fd_set readfds;
 
-  FD_ZERO(&readfds);
-  FD_SET(socket, &readfds);
-
   timeout.tv_sec = TIMEOUT;
   timeout.tv_usec = 0;
 
   while (!isEnd) {
+
+    FD_ZERO(&readfds);
+    FD_SET(socket, &readfds);
+
     selVal = select(socket + 1, &readfds, NULL, NULL, &timeout);
     if (selVal == -1) {
       cerr << "ERROR: select() failed" << endl; 
@@ -70,51 +51,47 @@ void receiveFile(int socket, FILE* file, string fileName) {
       // Timeout
       string timeError = "ERROR";
       cerr << "ERROR: timeout while receiving data from client" << endl;
-      fclose(file);
-      file = fopen(fileName.c_str(), "wb");
-      fwrite(timeError.c_str(), sizeof(char), timeError.size(), file);
-      fclose(file);
+      file.close();
+      file.open(filePath, ios::out | ios::trunc);
+      file.write(timeError.c_str(), timeError.size());
+      file.close();
       return;
     }
     // receive data
     memset(buffer, '\0', sizeof(buffer));
     if ((dataSize = recv(socket, buffer, BUFFER_SIZE, 0)) <= 0) {
-      cout << "all data received\n";
-      fclose(file);
-      break;
+      file.close();
+      return;
     }
     // write data to file
-    fwrite(&buffer, 1, dataSize, file);
+    file.write(buffer, dataSize);
   }
-  cout << "all data written to /" << fileName << "\n";
 } 
+
+void signalHandler(int sigNum) {
+  if (sigNum == SIGTERM || sigNum == SIGQUIT) {
+    exit(0);
+  }
+  return;
+}
 
 int main(int argc, char* argv[])
 {
+  signal(SIGTERM, signalHandler); 
+  signal(SIGQUIT, signalHandler); 
+
   // process port argument
   istringstream portArg(argv[1]);
   int port;
   portArg >> port;
   cout << "port: " << port << "\n";
   if (port < 1024) {
-    cerr << "ERROR: Invalid port number" << endl;
+    cerr << "ERROR: invalid port number" << endl;
     return 15;
   }
 
   // process directory argument
   string path = string(argv[2]);
-  if (path.front() == '/') {
-    path.erase(path.begin());
-  }
-  cout << "directory: " << path << "\n";
-
-  //string dirCommand = "sudo mkdir -p " + path;
-  //system(dirCommand.c_str());
-
-  if (makeDirectory(path) == false) {
-      cerr << "ERROR: Failed to create directory: " << path << endl;
-      return 20;
-    }
 
   // create a socket using TCP IP
   int sockfd = socket(AF_INET, SOCK_STREAM, 0);
@@ -144,33 +121,34 @@ int main(int argc, char* argv[])
     return 3;
   }
 
-  // accept a new connection
-  struct sockaddr_in clientAddr;
-  socklen_t clientAddrSize = sizeof(clientAddr);
-  int clientSockfd = accept(sockfd, (struct sockaddr*)&clientAddr, &clientAddrSize);
+  int connectionID = 0;
 
-  if (clientSockfd == -1) {
-    perror("accept");
-    return 4;
+  while (connectionID++ < MAX_CONNECTIONS || UNLIMITED_CONNECTIONS) {
+    // accept a new connection
+    struct sockaddr_in clientAddr;
+    socklen_t clientAddrSize = sizeof(clientAddr);
+    int clientSockfd = accept(sockfd, (struct sockaddr*)&clientAddr, &clientAddrSize);
+
+    if (clientSockfd == -1) {
+      perror("accept");
+      return 4;
+    }
+
+    char ipstr[INET_ADDRSTRLEN] = {'\0'};
+    inet_ntop(clientAddr.sin_family, &clientAddr.sin_addr, ipstr, sizeof(ipstr));
+    cout << "Accepted a connection from: " << ipstr << ":" <<
+      ntohs(clientAddr.sin_port) << endl;
+
+    // read/write data from the connection
+    string filePath = path + to_string(connectionID) + ".file";
+    receiveFile(clientSockfd, filePath);
+
+    // abort connection
+    close(clientSockfd);
   }
-  int connectionID = 1;
-
-  if (path.back() != '/') {
-    path += '/';
-  }
-  string fileName = path + to_string(connectionID) + ".file";
-
-  FILE *file = fopen(fileName.c_str(), "wb");
-  char ipstr[INET_ADDRSTRLEN] = {'\0'};
-  inet_ntop(clientAddr.sin_family, &clientAddr.sin_addr, ipstr, sizeof(ipstr));
-  cout << "Accepted a connection from: " << ipstr << ":" <<
-    ntohs(clientAddr.sin_port) << endl;
-
-  // read/write data from/into the connection
   
-  receiveFile(clientSockfd, file, fileName);
+  // close socket
+  close(sockfd);
 
-  close(clientSockfd);
-  
   return 0;
 }

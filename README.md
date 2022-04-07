@@ -10,7 +10,7 @@ NUID: 87038425
 $ server <PORT> <FILE-DIR>
 ```
 <ul>
-    <li>&lt;PORT&gt; : the port number on which the server will listen on connections. Must be a valid port number > 1023. </li>
+    <li>&lt;PORT&gt; : the port number on which the server will listen on connections. Must be a valid port number. </li>
     <li>&lt;FILE-DIR&gt; : the directory path (relative or absolute) where received files are to be saved.</li>
 </ul>
 
@@ -28,7 +28,7 @@ The function `signalHandler()` takes a signal code sent to the server. If the si
 
 ### Main Function
 
-The main function of the server first processes the two command-line arguments, saving them as variables `port` (ERROR ocurs and server stops if `port` is an invalid number) and `path`. Then a TCP socket is created, binded (using `port`), and set to listen mode in the same way as the Project-1-Accio skeleton code. From here the server creates `int connectionID` to distinguish connections in the current session. The server will then accept a new connections, generate a file path of the form `path/connectionID.file`, receive and write the data sent from the connection using `receiveFile()`, and then closes the connection. It repeats this processes for new connections until 10 connections have been processed, a SIGNAL to stop the server is received, or an error occurs.
+The `main()` function of the server first processes the two command-line arguments, saving them as variables `port` (ERROR ocurs and server stops if `port` is an invalid number) and `path`. Then a TCP socket is created, binded (using `port`), and set to listen mode in the same way as the Project-1-Accio skeleton code. From here the server creates `int connectionID` to distinguish connections in the current session. The server will then accept a new connection, generate a file path of the form `path/connectionID.file`, receive and write the data sent from the connection using `receiveFile()`, and then close the connection. It repeats this process for new connections until 10 connections have been processed, a signal to stop the server is received, or an error occurs.
 
 ## Client Design
 
@@ -38,7 +38,7 @@ $ ./server <HOSTNAME-OR-IP> <PORT> <FILENAME>
 ```
 <ul>
     <li>&lt;HOSTNAME-OR-IP&gt; : the hostname or IP address of the server to connect. </li>
-    <li>&lt;PORT&gt; : the port number of the server to connect. Must be a valid port number > 1023. </li>
+    <li>&lt;PORT&gt; : the port number of the server to connect. Must be a valid port number. </li>
     <li>&lt;FILENAME&gt; : the name of the file to be transfered to the server.</li>
 </ul>
 
@@ -47,7 +47,7 @@ $ ./server <HOSTNAME-OR-IP> <PORT> <FILENAME>
 ```c++
 void connectServer(int socket, int port, string ip);
 ```
-The function `connectServer()` takes a socket, port number, and IP address, switches the socket to nonblocking mode and attempts to connect to the server, terminating the client with an error if the connection fails or a timeout occurs.
+The function `connectServer()` takes a socket, port number, and IP address, switches the socket to nonblocking mode, and then attempts to connect to the server, terminating the client with an error if the connection fails or a timeout occurs.
 
 ```c++
 void sendFile(int socket, string fileName);
@@ -58,8 +58,9 @@ The function `sendFile()` takes a socket and a file name, opens the file for rea
 bool validateIP(string ip);
 ```
 The function `validateIP()` takes a string, returning `true` if the string is a valid IP address and `false` otherwise.
+
 ### Main Function
-The main function of the server first processes (including validation for the first two) the three command-line arguments, saving them as variables `ip`, `port`, and `fileName`. Then a TCP socket is created and attempts to connect to the server using `connectServer()`. If successful, the client then sends the data of `fileName` using `sendFile()`. If successful, the TCP connection is aborted and the client is terminated.
+The `main()` function of the server first processes (including validation for the first two) the three command-line arguments, saving them as variables `ip`, `port`, and `fileName`. Then a TCP socket is created and attempts to connect to the server using `connectServer()`. If successful, the client then sends the data of `fileName` using `sendFile()`. If successful, the TCP connection is aborted and the client is terminated.
 
 ## Problems
 
@@ -75,7 +76,7 @@ I encountered several problems of varying difficulty. The main issues that consu
             <li>I found out that my server was not able to handle absolute paths (fopen() would only work with relative paths). I solved this by switching to fstream for handling my output file. </li>
         </ul>
     </li>
-     <li> fixing a segmenation fault early on in the project
+     <li> fixing a segmentation fault early on in the project
         <ul>
             <li>Embarrassingly (but comical enough for me to want to share), I discovered that I had named the input text file "file.txt" on my machine, meaning that it was stored as file.txt.txt. It took me a while to realize this, but when I did, the fix was (clearly) very easy.</li>
         </ul>

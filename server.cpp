@@ -15,7 +15,7 @@
 
 #define BUFFER_SIZE 8192
 #define TIMEOUT 10
-#define MAX_CONNECTIONS 100
+#define MAX_CONNECTIONS 10
 #define UNLIMITED_CONNECTIONS false
 
 using namespace std;

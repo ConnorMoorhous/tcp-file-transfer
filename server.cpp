@@ -13,9 +13,9 @@
 #include <signal.h>
 #include <sys/select.h> 
 
-#define BUFFER_SIZE 1024
+#define BUFFER_SIZE 8192
 #define TIMEOUT 10
-#define MAX_CONNECTIONS 10
+#define MAX_CONNECTIONS 100
 #define UNLIMITED_CONNECTIONS false
 
 using namespace std;
@@ -43,10 +43,12 @@ void receiveFile(int socket, string filePath) {
     FD_SET(socket, &readfds);
 
     selVal = select(socket + 1, &readfds, NULL, NULL, &timeout);
+
     if (selVal == -1) {
       cerr << "ERROR: select() failed" << endl; 
       return;
     }
+
     if (selVal == 0) {
       // Timeout
       string timeError = "ERROR";
@@ -57,12 +59,15 @@ void receiveFile(int socket, string filePath) {
       file.close();
       return;
     }
+
     // receive data
     memset(buffer, '\0', sizeof(buffer));
     if ((dataSize = recv(socket, buffer, BUFFER_SIZE, 0)) <= 0) {
       file.close();
+      cout << "Successfully saved incoming file at " << filePath << endl;
       return;
     }
+
     // write data to file
     file.write(buffer, dataSize);
   }
@@ -81,13 +86,12 @@ int main(int argc, char* argv[])
   signal(SIGQUIT, signalHandler); 
 
   // process port argument
-  istringstream portArg(argv[1]);
   int port;
+  istringstream portArg(argv[1]);
   portArg >> port;
-  cout << "port: " << port << "\n";
   if (port < 1024) {
     cerr << "ERROR: invalid port number" << endl;
-    return 15;
+    return 1;
   }
 
   // process directory argument
@@ -100,7 +104,7 @@ int main(int argc, char* argv[])
   int yes = 1;
   if (setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(int)) == -1) {
     perror("setsockopt");
-    return 1;
+    return 2;
   }
 
   // bind address to socket
@@ -112,18 +116,21 @@ int main(int argc, char* argv[])
 
   if (bind(sockfd, (struct sockaddr*)&addr, sizeof(addr)) == -1) {
     perror("bind");
-    return 2;
+    return 3;
   }
 
   // set socket to listen status
   if (listen(sockfd, 1) == -1) {
     perror("listen");
-    return 3;
+    return 4;
   }
-
+  
   int connectionID = 0;
 
-  while (connectionID++ < MAX_CONNECTIONS || UNLIMITED_CONNECTIONS) {
+  while ((connectionID++ < MAX_CONNECTIONS) || UNLIMITED_CONNECTIONS) {
+
+    cout << "\nListening...\n\n";
+
     // accept a new connection
     struct sockaddr_in clientAddr;
     socklen_t clientAddrSize = sizeof(clientAddr);
@@ -131,12 +138,12 @@ int main(int argc, char* argv[])
 
     if (clientSockfd == -1) {
       perror("accept");
-      return 4;
+      return 5;
     }
 
     char ipstr[INET_ADDRSTRLEN] = {'\0'};
     inet_ntop(clientAddr.sin_family, &clientAddr.sin_addr, ipstr, sizeof(ipstr));
-    cout << "Accepted a connection from: " << ipstr << ":" <<
+    cout << "Accepted connection (ID: " << to_string(connectionID) << ") from: " << ipstr << ":" <<
       ntohs(clientAddr.sin_port) << endl;
 
     // read/write data from the connection
@@ -145,6 +152,8 @@ int main(int argc, char* argv[])
 
     // abort connection
     close(clientSockfd);
+    cout << "Closed connection (ID: " << to_string(connectionID) << ") from: " << ipstr << ":" <<
+      ntohs(clientAddr.sin_port) << endl;
   }
   
   // close socket

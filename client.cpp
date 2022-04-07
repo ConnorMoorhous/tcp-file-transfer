@@ -12,7 +12,7 @@
 #include <fcntl.h>
 #include <sys/select.h>
 
-#define BUFFER_SIZE 1024
+#define BUFFER_SIZE 8192
 #define TIMEOUT 10
 
 using namespace std;
@@ -51,13 +51,15 @@ void connectServer(int socket, int port, string ip) {
     timeout.tv_usec = 0;
 
     int selVal = select(socket + 1, NULL, &writefds, &extendfds, &timeout);
+
     if (selVal == -1) {
       cerr << "ERROR: select() failed" << endl; 
       exit(4);
     }
+
     if (selVal == 0) {
       // timeout
-      close(socket);
+      close(socket); // abort connection
       cerr << "ERROR: timeout while trying to connect to server" << endl;
       exit(5);
     } 
@@ -109,27 +111,31 @@ void sendFile(int socket, string fileName) {
     FD_SET(socket, &writefds);
   
     selVal = select(socket + 1, NULL, &writefds, NULL, &timeout);
+    
     if (selVal == -1) {
       cerr << "ERROR: select() failed" << endl; 
       exit(8);
     }
+
     if (selVal == 0) {
       // timeout
-      close(socket);
+      close(socket); // abort connection
       cerr << "ERROR: timeout while trying to send data to server" << endl;
       exit(9);
     } 
 
+    // send data
     memset(buffer, '\0', sizeof(buffer));
-
     if ((bytesRead = fread(&buffer, 1, BUFFER_SIZE, file)) > 0) {
       send(socket, buffer, bytesRead, 0);
     }
-    else {
+    else {      
       break;
     }
   }
-  
+
+  cout << fileName << " successfully sent over connection\n";
+
   // close file
   if (fclose(file) == EOF) {
     cerr << "ERROR: failed to close " << fileName << endl;
@@ -153,7 +159,6 @@ bool validateIP(string ip) {
     }
 
     token = ip.substr(0, pos);
-    cout << "token" << n << ": " << token << "\n";
     isDigit = !token.empty() && (token.find_first_not_of("[0123456789]") == string::npos);
     
     if (!isDigit || stoi(token) < 0 || stoi(token) > 255) {
@@ -183,7 +188,6 @@ int main(int argc, char* argv[])
   // process hostname/ip argument
   string localhost = "127.0.0.1";
   string ip = string(argv[1]);
-  cout << "ip address: " << ip << "\n";
 
   if (ip.compare("localhost") == 0) {
     ip.replace(0, localhost.length(), localhost);
@@ -194,10 +198,9 @@ int main(int argc, char* argv[])
   }
 
   // process port argument
-  istringstream portArg(argv[2]);
   int port;
+  istringstream portArg(argv[2]);
   portArg >> port;
-  cout << "port: " << port << "\n";
   if (port < 1024) {
     cerr << "ERROR: invalid port number" << endl;
     return 2;
@@ -205,7 +208,6 @@ int main(int argc, char* argv[])
 
   // process file argument
   string fileName = string(argv[3]);
-  cout << "file: " << fileName << "\n";
 
   // create a socket using TCP IP
   int sockfd = socket(AF_INET, SOCK_STREAM, 0);
@@ -218,6 +220,8 @@ int main(int argc, char* argv[])
 
   // abort connection
   close(sockfd);
+
+  cout << "Closed connection\n";
 
   return 0;
 }
